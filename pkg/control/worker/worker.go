@@ -41,7 +41,7 @@ func NewSSHWorker(cfg config.WorkerConfig, healthMgr *health.Manager) *SSHWorker
 		healthMgr: healthMgr,
 	}
 	if cfg.PayloadData != "" {
-		inj, err := payload.NewInjector(cfg.PayloadData, 50*time.Millisecond)
+		inj, err := payload.NewInjector(cfg.PayloadData, 1000*time.Millisecond)
 		if err != nil {
 			observability.Error("Failed to init payload injector", "worker_id", cfg.ID, "err", err)
 		} else {
