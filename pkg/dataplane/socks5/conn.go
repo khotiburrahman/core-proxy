@@ -95,7 +95,7 @@ func (h *ConnHandler) authenticate() error {
 
 	if h.cfg.Username != "" && h.cfg.Password != "" {
 		if !containsMethod(methods, AuthMethodUserPass) {
-			_ = h.conn.Write([]byte{VersionSOCKS5, AuthMethodNoAcceptable})
+			_, _ = h.conn.Write([]byte{VersionSOCKS5, AuthMethodNoAcceptable})
 			return fmt.Errorf("user/pass auth required by server but not offered by client")
 		}
 		if _, err := h.conn.Write([]byte{VersionSOCKS5, AuthMethodUserPass}); err != nil {
@@ -105,7 +105,7 @@ func (h *ConnHandler) authenticate() error {
 	}
 
 	if !containsMethod(methods, AuthMethodNoAuth) {
-		_ = h.conn.Write([]byte{VersionSOCKS5, AuthMethodNoAcceptable})
+		_, _ = h.conn.Write([]byte{VersionSOCKS5, AuthMethodNoAcceptable})
 		return fmt.Errorf("no-auth required but not offered by client")
 	}
 
