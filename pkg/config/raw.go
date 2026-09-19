@@ -31,6 +31,7 @@ type RawWorkerConfig struct {
 	Password       string `yaml:"password"`
 	PrivateKey     string `yaml:"private_key"`
 	PayloadName    string `yaml:"payload_name"`
+	RemoteProxy    string `yaml:"remote_proxy"`
 	ConnectTimeout string `yaml:"connect_timeout"`
 	KeepAliveSec   int    `yaml:"keepalive_sec"`
 }
@@ -57,4 +58,3 @@ type RawPayloadConfig struct {
 	Name string `yaml:"name"`
 	Data string `yaml:"data"`
 }
-

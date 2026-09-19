@@ -4,19 +4,20 @@ app:
   api_addr: "127.0.0.1:8080"
 
 socks5:
-  listen_addr: "127.0.0.1:1080"
+  listen_addr: "127.0.0.1:1085"
   username: ""
   password: ""
 
 workers:
   - id: "ssh-sg-1"
     type: "ssh"
-    host: "sg1.example.com"
+    host: "biznet.vpnstore28.biz.id"
     port: 22
-    username: "root"
-    password: "secret"
+    username: "hehe"
+    password: "hehe"
     private_key: ""
-    payload_name: ""
+    payload_name: "connect-raw"
+    remote_proxy: "1.2.3.4:80"
     connect_timeout: "10s"
     keepalive_sec: 30
 
@@ -42,11 +43,11 @@ rules:
     value: ""
     outbound: "direct"
 
-domains:
-  - name: "pool-sg"
-    file_path: "lists/sg.txt"
+domains: []
 
 payloads:
-  - name: "default"
-    data: "GET / HTTP/1.1[crlf]Host: [host][crlf]Connection: Keep-Alive[crlf][crlf][split]HTTP/1.1 200 OK[crlf]"
+  - name: "connect-raw"
+    data: "[raw]"
 
+  - name: "connect-explicit"
+    data: "CONNECT [host]:[port] HTTP/1.1[crlf]Host: [host][crlf][crlf]"

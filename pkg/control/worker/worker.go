@@ -13,10 +13,12 @@ import (
 	"core-proxy/pkg/common/observability"
 	"core-proxy/pkg/config"
 	"core-proxy/pkg/control/health"
+	"core-proxy/pkg/control/payload"
 )
 
 type SSHWorker struct {
 	cfg         config.WorkerConfig
+	injector    *payload.Injector
 	state       atomic.Int32
 	client      atomic.Pointer[ssh.Client]
 	conn        atomic.Pointer[net.Conn]
@@ -32,6 +34,14 @@ func NewSSHWorker(cfg config.WorkerConfig, healthMgr *health.Manager) *SSHWorker
 	w := &SSHWorker{
 		cfg:       cfg,
 		healthMgr: healthMgr,
+	}
+	if cfg.PayloadData != "" {
+		inj, err := payload.NewInjector(cfg.PayloadData, 50*time.Millisecond)
+		if err != nil {
+			observability.Error("Failed to init payload injector", "worker_id", cfg.ID, "err", err)
+		} else {
+			w.injector = inj
+		}
 	}
 	w.state.Store(int32(StateCreated))
 	return w
@@ -144,9 +154,24 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 	dialer := &net.Dialer{Timeout: w.cfg.ConnectTimeout}
 	target := fmt.Sprintf("%s:%d", w.cfg.Host, w.cfg.Port)
 
-	conn, err := dialer.DialContext(ctx, "tcp", target)
+	dialAddr := target
+	if w.cfg.RemoteProxy != "" {
+		dialAddr = w.cfg.RemoteProxy
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", dialAddr)
 	if err != nil {
 		return err
+	}
+
+	// Jika lewat remote proxy, kirim HTTP CONNECT / payload dulu
+	if w.cfg.RemoteProxy != "" && w.injector != nil {
+		if err := w.injector.Inject(ctx, conn, target); err != nil {
+			conn.Close()
+			return fmt.Errorf("payload injection failed: %w", err)
+		}
+		observability.Debug("Payload injected through remote proxy",
+			"worker_id", w.cfg.ID, "proxy", w.cfg.RemoteProxy, "target", target)
 	}
 
 	rawConnPtr := &conn
@@ -159,12 +184,29 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 
 	sshConfig := &ssh.ClientConfig{
 		Config: ssh.Config{
-			Ciphers: []string{"aes128-gcm@openssh.com", "chacha20-poly1305@openssh.com", "aes128-ctr"},
+			Ciphers: []string{
+				"aes128-gcm@openssh.com",
+				"chacha20-poly1305@openssh.com",
+				"aes128-ctr",
+				"aes192-ctr",
+				"aes256-ctr",
+				"aes128-cbc",
+				"3des-cbc",
+			},
 		},
 		User:            w.cfg.Username,
 		Auth:            auths,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         w.cfg.ConnectTimeout,
+		HostKeyAlgorithms: []string{
+			ssh.KeyAlgoED25519,
+			ssh.KeyAlgoRSA,
+			ssh.KeyAlgoRSASHA256,
+			ssh.KeyAlgoRSASHA512,
+			ssh.KeyAlgoECDSA256,
+			ssh.KeyAlgoECDSA384,
+			ssh.KeyAlgoECDSA521,
+		},
+		Timeout: w.cfg.ConnectTimeout,
 	}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, target, sshConfig)
@@ -220,4 +262,3 @@ func (w *SSHWorker) DialChannel(ctx context.Context, nt, addr string) (net.Conn,
 	}
 	return client.Dial(nt, addr)
 }
-

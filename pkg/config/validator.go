@@ -14,6 +14,18 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 		return nil, fmt.Errorf("invalid socks5 listen_addr: %w", err)
 	}
 
+	// Bangun map payload lebih dulu agar bisa di-resolve ke worker
+	payloads := make(map[string]PayloadConfig)
+	for _, p := range raw.Payloads {
+		if p.Name == "" {
+			return nil, fmt.Errorf("payload name cannot be empty")
+		}
+		payloads[p.Name] = PayloadConfig{
+			Name: p.Name,
+			Data: p.Data,
+		}
+	}
+
 	workers := make(map[string]WorkerConfig)
 	for _, w := range raw.Workers {
 		if w.ID == "" {
@@ -32,6 +44,16 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 			timeout = parsed
 		}
 
+		// Resolve payload_name -> PayloadData
+		payloadData := ""
+		if w.PayloadName != "" {
+			if p, ok := payloads[w.PayloadName]; ok {
+				payloadData = p.Data
+			} else {
+				return nil, fmt.Errorf("worker %s references unknown payload: %s", w.ID, w.PayloadName)
+			}
+		}
+
 		workers[w.ID] = WorkerConfig{
 			ID:             w.ID,
 			Type:           w.Type,
@@ -41,6 +63,8 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 			Password:       w.Password,
 			PrivateKey:     w.PrivateKey,
 			PayloadName:    w.PayloadName,
+			PayloadData:    payloadData,
+			RemoteProxy:    w.RemoteProxy,
 			ConnectTimeout: timeout,
 			KeepAliveSec:   time.Duration(w.KeepAliveSec) * time.Second,
 		}
@@ -59,17 +83,6 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 			Type:      o.Type,
 			WorkerIDs: o.WorkerIDs,
 			Strategy:  o.Strategy,
-		}
-	}
-
-	payloads := make(map[string]PayloadConfig)
-	for _, p := range raw.Payloads {
-		if p.Name == "" {
-			return nil, fmt.Errorf("payload name cannot be empty")
-		}
-		payloads[p.Name] = PayloadConfig{
-			Name: p.Name,
-			Data: p.Data,
 		}
 	}
 
@@ -111,4 +124,3 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 		Payloads:  payloads,
 	}, nil
 }
-

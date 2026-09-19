@@ -35,6 +35,8 @@ type WorkerConfig struct {
 	Password       string
 	PrivateKey     string
 	PayloadName    string
+	PayloadData    string
+	RemoteProxy    string
 	ConnectTimeout time.Duration
 	KeepAliveSec   time.Duration
 }
@@ -61,4 +63,3 @@ type PayloadConfig struct {
 	Name string
 	Data string
 }
-
