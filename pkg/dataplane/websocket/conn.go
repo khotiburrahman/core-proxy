@@ -296,3 +296,10 @@ func (c *Conn) RemoteAddr() net.Addr               { return c.conn.RemoteAddr() 
 func (c *Conn) SetDeadline(t time.Time) error      { return c.conn.SetDeadline(t) }
 func (c *Conn) SetReadDeadline(t time.Time) error  { return c.conn.SetReadDeadline(t) }
 func (c *Conn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
+
+func WrapConn(conn net.Conn, br *bufio.Reader) *Conn {
+	return &Conn{
+		conn: conn,
+		br:   br,
+	}
+}

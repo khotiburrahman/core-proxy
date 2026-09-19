@@ -3,6 +3,9 @@ package worker
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -156,13 +159,11 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 	var err error
 
 	if w.cfg.RemoteProxy != "" && w.cfg.RemoteProxyMode == "ws" {
-		// ---- Mode WebSocket ----
 		conn, err = w.connectViaWS(ctx, dialer, dialAddr, target)
 		if err != nil {
 			return err
 		}
 	} else {
-		// ---- Mode TCP / HTTP CONNECT ----
 		conn, err = dialer.DialContext(ctx, "tcp", dialAddr)
 		if err != nil {
 			return err
@@ -231,15 +232,12 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 	return nil
 }
 
-// connectViaWS melakukan TCP dial ke proxy lalu HTTP Upgrade ke WebSocket.
-// TLS otomatis aktif kalau port proxy adalah 443 atau RemoteProxyTLS=true.
 func (w *SSHWorker) connectViaWS(ctx context.Context, dialer *net.Dialer, proxyAddr, sshTarget string) (net.Conn, error) {
 	raw, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("dial proxy failed: %w", err)
 	}
 
-	// Deteksi TLS dari port proxy atau flag eksplisit
 	useTLS := w.cfg.RemoteProxyTLS
 	if !useTLS {
 		if _, port, perr := net.SplitHostPort(proxyAddr); perr == nil && port == "443" {
@@ -247,36 +245,103 @@ func (w *SSHWorker) connectViaWS(ctx context.Context, dialer *net.Dialer, proxyA
 		}
 	}
 
-	// Host header & SNI: pakai SSH host (target), karena biasanya Cloudflare
-	// Worker dikonfigurasi berdasarkan domain SSH.
-	hostHeader := w.cfg.Host
-	sni := w.cfg.Host
-
-	wsConn, err := websocket.DialWS(
-		raw,
-		hostHeader,
-		w.cfg.RemoteProxyPath,
-		useTLS,
-		sni,
-		w.cfg.ConnectTimeout,
-	)
-	if err != nil {
-		raw.Close()
-		return nil, fmt.Errorf("websocket upgrade failed: %w", err)
+	var underlying net.Conn = raw
+	if useTLS {
+		tlsCfg := &tls.Config{
+			ServerName:         w.cfg.Host,
+			InsecureSkipVerify: true,
+		}
+		tlsConn := tls.Client(raw, tlsCfg)
+		_ = tlsConn.SetDeadline(time.Now().Add(w.cfg.ConnectTimeout))
+		if err := tlsConn.Handshake(); err != nil {
+			raw.Close()
+			return nil, fmt.Errorf("tls handshake failed: %w", err)
+		}
+		_ = tlsConn.SetDeadline(time.Time{})
+		underlying = tlsConn
 	}
 
-	observability.Info("WebSocket tunnel established",
+	if w.injector != nil {
+		if err := w.injector.Inject(ctx, underlying, sshTarget); err != nil {
+			underlying.Close()
+			return nil, fmt.Errorf("payload injection failed: %w", err)
+		}
+	} else {
+		keyBytes := make([]byte, 16)
+		if _, err := rand.Read(keyBytes); err != nil {
+			underlying.Close()
+			return nil, err
+		}
+		key := base64.StdEncoding.EncodeToString(keyBytes)
+		req := fmt.Sprintf(
+			"GET %s HTTP/1.1\r\n"+
+				"Host: %s\r\n"+
+				"Upgrade: websocket\r\n"+
+				"Connection: Upgrade\r\n"+
+				"Sec-WebSocket-Key: %s\r\n"+
+				"Sec-WebSocket-Version: 13\r\n"+
+				"\r\n",
+			w.cfg.RemoteProxyPath, w.cfg.Host, key,
+		)
+		if _, err := underlying.Write([]byte(req)); err != nil {
+			underlying.Close()
+			return nil, fmt.Errorf("failed sending upgrade request: %w", err)
+		}
+	}
+
+	_ = underlying.SetReadDeadline(time.Now().Add(w.cfg.ConnectTimeout))
+	br := bufio.NewReaderSize(underlying, 4096)
+
+	statusLine, err := br.ReadString('\n')
+	if err != nil {
+		underlying.Close()
+		return nil, fmt.Errorf("failed reading status line: %w", err)
+	}
+	statusLine = strings.TrimRight(statusLine, "\r\n")
+
+	if !strings.Contains(statusLine, "200") && !strings.Contains(statusLine, "101") {
+		underlying.Close()
+		return nil, fmt.Errorf("expected 200/101, got: %q", statusLine)
+	}
+
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			underlying.Close()
+			return nil, fmt.Errorf("failed reading upgrade header: %w", err)
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+	_ = underlying.SetReadDeadline(time.Time{})
+
+	isWS := strings.Contains(statusLine, "101")
+
+	observability.Info("Proxy tunnel established",
 		"worker_id", w.cfg.ID,
 		"proxy", proxyAddr,
 		"tls", useTLS,
-		"path", w.cfg.RemoteProxyPath,
-		"host", hostHeader,
+		"status", statusLine,
+		"ws_framing", isWS,
 	)
 
-	return wsConn, nil
+	if isWS {
+		return websocket.WrapConn(underlying, br), nil
+	}
+
+	return &prefixedConn{Conn: underlying, br: br}, nil
 }
 
-// readProxyResponse membaca status line + header HTTP dari proxy HTTP CONNECT.
+type prefixedConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func (p *prefixedConn) Read(b []byte) (int, error) {
+	return p.br.Read(b)
+}
+
 func readProxyResponse(conn net.Conn, timeout time.Duration) error {
 	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	defer conn.SetReadDeadline(time.Time{})
