@@ -27,18 +27,21 @@ type SOCKS5Config struct {
 }
 
 type WorkerConfig struct {
-	ID             string
-	Type           string
-	Host           string
-	Port           int
-	Username       string
-	Password       string
-	PrivateKey     string
-	PayloadName    string
-	PayloadData    string
-	RemoteProxy    string
-	ConnectTimeout time.Duration
-	KeepAliveSec   time.Duration
+	ID              string
+	Type            string
+	Host            string
+	Port            int
+	Username        string
+	Password        string
+	PrivateKey      string
+	PayloadName     string
+	PayloadData     string
+	RemoteProxy     string
+	RemoteProxyMode string
+	RemoteProxyPath string
+	RemoteProxyTLS  bool
+	ConnectTimeout  time.Duration
+	KeepAliveSec    time.Duration
 }
 
 type OutboundConfig struct {

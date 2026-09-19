@@ -14,7 +14,6 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 		return nil, fmt.Errorf("invalid socks5 listen_addr: %w", err)
 	}
 
-	// Bangun map payload lebih dulu agar bisa di-resolve ke worker
 	payloads := make(map[string]PayloadConfig)
 	for _, p := range raw.Payloads {
 		if p.Name == "" {
@@ -44,7 +43,6 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 			timeout = parsed
 		}
 
-		// Resolve payload_name -> PayloadData
 		payloadData := ""
 		if w.PayloadName != "" {
 			if p, ok := payloads[w.PayloadName]; ok {
@@ -54,19 +52,33 @@ func ValidateAndNormalize(raw *RawConfig) (*Config, error) {
 			}
 		}
 
+		// Normalisasi mode
+		mode := w.RemoteProxyMode
+		if mode == "" {
+			mode = "http"
+		}
+
+		path := w.RemoteProxyPath
+		if path == "" {
+			path = "/"
+		}
+
 		workers[w.ID] = WorkerConfig{
-			ID:             w.ID,
-			Type:           w.Type,
-			Host:           w.Host,
-			Port:           w.Port,
-			Username:       w.Username,
-			Password:       w.Password,
-			PrivateKey:     w.PrivateKey,
-			PayloadName:    w.PayloadName,
-			PayloadData:    payloadData,
-			RemoteProxy:    w.RemoteProxy,
-			ConnectTimeout: timeout,
-			KeepAliveSec:   time.Duration(w.KeepAliveSec) * time.Second,
+			ID:              w.ID,
+			Type:            w.Type,
+			Host:            w.Host,
+			Port:            w.Port,
+			Username:        w.Username,
+			Password:        w.Password,
+			PrivateKey:      w.PrivateKey,
+			PayloadName:     w.PayloadName,
+			PayloadData:     payloadData,
+			RemoteProxy:     w.RemoteProxy,
+			RemoteProxyMode: mode,
+			RemoteProxyPath: path,
+			RemoteProxyTLS:  w.RemoteProxyTLS,
+			ConnectTimeout:  timeout,
+			KeepAliveSec:    time.Duration(w.KeepAliveSec) * time.Second,
 		}
 	}
 

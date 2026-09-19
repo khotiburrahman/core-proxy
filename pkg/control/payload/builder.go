@@ -42,7 +42,10 @@ func (t *Template) BuildSegments(target TargetInfo) ([][]byte, error) {
 		case TokenProtocol:
 			currentSeg.WriteString(target.Protocol)
 		case TokenRaw:
-			currentSeg.WriteString(fmt.Sprintf("CONNECT %s:%s HTTP/1.1\r\n\r\n", target.Host, target.Port))
+			currentSeg.WriteString(fmt.Sprintf(
+				"CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\nProxy-Connection: Keep-Alive\r\n\r\n",
+				target.Host, target.Port, target.Host, target.Port,
+			))
 		case TokenSplit:
 			if currentSeg.Len() > 0 {
 				segments = append(segments, []byte(currentSeg.String()))
@@ -57,4 +60,3 @@ func (t *Template) BuildSegments(target TargetInfo) ([][]byte, error) {
 
 	return segments, nil
 }
-

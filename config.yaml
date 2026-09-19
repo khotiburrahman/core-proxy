@@ -16,9 +16,12 @@ workers:
     username: "hehe"
     password: "hehe"
     private_key: ""
-    payload_name: "connect-raw"
-    remote_proxy: "1.2.3.4:80"
-    connect_timeout: "10s"
+    payload_name: ""
+    remote_proxy: "104.21.83.135:80"
+    remote_proxy_mode: "ws"
+    remote_proxy_path: "/"
+    remote_proxy_tls: false
+    connect_timeout: "15s"
     keepalive_sec: 30
 
 outbounds:
@@ -45,9 +48,4 @@ rules:
 
 domains: []
 
-payloads:
-  - name: "connect-raw"
-    data: "[raw]"
-
-  - name: "connect-explicit"
-    data: "CONNECT [host]:[port] HTTP/1.1[crlf]Host: [host][crlf][crlf]"
+payloads: []

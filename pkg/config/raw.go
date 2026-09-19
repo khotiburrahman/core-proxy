@@ -23,17 +23,20 @@ type RawSOCKS5Config struct {
 }
 
 type RawWorkerConfig struct {
-	ID             string `yaml:"id"`
-	Type           string `yaml:"type"`
-	Host           string `yaml:"host"`
-	Port           int    `yaml:"port"`
-	Username       string `yaml:"username"`
-	Password       string `yaml:"password"`
-	PrivateKey     string `yaml:"private_key"`
-	PayloadName    string `yaml:"payload_name"`
-	RemoteProxy    string `yaml:"remote_proxy"`
-	ConnectTimeout string `yaml:"connect_timeout"`
-	KeepAliveSec   int    `yaml:"keepalive_sec"`
+	ID              string `yaml:"id"`
+	Type            string `yaml:"type"`
+	Host            string `yaml:"host"`
+	Port            int    `yaml:"port"`
+	Username        string `yaml:"username"`
+	Password        string `yaml:"password"`
+	PrivateKey      string `yaml:"private_key"`
+	PayloadName     string `yaml:"payload_name"`
+	RemoteProxy     string `yaml:"remote_proxy"`
+	RemoteProxyMode string `yaml:"remote_proxy_mode"`
+	RemoteProxyPath string `yaml:"remote_proxy_path"`
+	RemoteProxyTLS  bool   `yaml:"remote_proxy_tls"`
+	ConnectTimeout  string `yaml:"connect_timeout"`
+	KeepAliveSec    int    `yaml:"keepalive_sec"`
 }
 
 type RawOutboundConfig struct {

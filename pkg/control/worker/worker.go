@@ -1,9 +1,11 @@
 package worker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"core-proxy/pkg/config"
 	"core-proxy/pkg/control/health"
 	"core-proxy/pkg/control/payload"
+	"core-proxy/pkg/dataplane/websocket"
 )
 
 type SSHWorker struct {
@@ -47,25 +50,15 @@ func NewSSHWorker(cfg config.WorkerConfig, healthMgr *health.Manager) *SSHWorker
 	return w
 }
 
-func (w *SSHWorker) ID() string {
-	return w.cfg.ID
-}
+func (w *SSHWorker) ID() string { return w.cfg.ID }
 
-func (w *SSHWorker) State() State {
-	return State(w.state.Load())
-}
+func (w *SSHWorker) State() State { return State(w.state.Load()) }
 
-func (w *SSHWorker) ActiveConnections() int64 {
-	return w.activeConns.Load()
-}
+func (w *SSHWorker) ActiveConnections() int64 { return w.activeConns.Load() }
 
-func (w *SSHWorker) IncrConn() {
-	w.activeConns.Add(1)
-}
+func (w *SSHWorker) IncrConn() { w.activeConns.Add(1) }
 
-func (w *SSHWorker) DecrConn() {
-	w.activeConns.Add(-1)
-}
+func (w *SSHWorker) DecrConn() { w.activeConns.Add(-1) }
 
 func (w *SSHWorker) Latency() time.Duration {
 	return time.Duration(w.latencyMs.Load()) * time.Millisecond
@@ -159,19 +152,36 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 		dialAddr = w.cfg.RemoteProxy
 	}
 
-	conn, err := dialer.DialContext(ctx, "tcp", dialAddr)
-	if err != nil {
-		return err
-	}
+	var conn net.Conn
+	var err error
 
-	// Jika lewat remote proxy, kirim HTTP CONNECT / payload dulu
-	if w.cfg.RemoteProxy != "" && w.injector != nil {
-		if err := w.injector.Inject(ctx, conn, target); err != nil {
-			conn.Close()
-			return fmt.Errorf("payload injection failed: %w", err)
+	if w.cfg.RemoteProxy != "" && w.cfg.RemoteProxyMode == "ws" {
+		// ---- Mode WebSocket ----
+		conn, err = w.connectViaWS(ctx, dialer, dialAddr, target)
+		if err != nil {
+			return err
 		}
-		observability.Debug("Payload injected through remote proxy",
-			"worker_id", w.cfg.ID, "proxy", w.cfg.RemoteProxy, "target", target)
+	} else {
+		// ---- Mode TCP / HTTP CONNECT ----
+		conn, err = dialer.DialContext(ctx, "tcp", dialAddr)
+		if err != nil {
+			return err
+		}
+
+		if w.cfg.RemoteProxy != "" && w.injector != nil {
+			if err := w.injector.Inject(ctx, conn, target); err != nil {
+				conn.Close()
+				return fmt.Errorf("payload injection failed: %w", err)
+			}
+			observability.Debug("Payload injected",
+				"worker_id", w.cfg.ID, "proxy", w.cfg.RemoteProxy, "target", target)
+
+			if err := readProxyResponse(conn, w.cfg.ConnectTimeout); err != nil {
+				conn.Close()
+				return fmt.Errorf("proxy handshake failed: %w", err)
+			}
+			observability.Debug("Proxy tunnel established", "worker_id", w.cfg.ID)
+		}
 	}
 
 	rawConnPtr := &conn
@@ -218,6 +228,84 @@ func (w *SSHWorker) connect(ctx context.Context) error {
 	client := ssh.NewClient(c, chans, reqs)
 	w.client.Store(client)
 	w.setState(StateConnected)
+	return nil
+}
+
+// connectViaWS melakukan TCP dial ke proxy lalu HTTP Upgrade ke WebSocket.
+// TLS otomatis aktif kalau port proxy adalah 443 atau RemoteProxyTLS=true.
+func (w *SSHWorker) connectViaWS(ctx context.Context, dialer *net.Dialer, proxyAddr, sshTarget string) (net.Conn, error) {
+	raw, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("dial proxy failed: %w", err)
+	}
+
+	// Deteksi TLS dari port proxy atau flag eksplisit
+	useTLS := w.cfg.RemoteProxyTLS
+	if !useTLS {
+		if _, port, perr := net.SplitHostPort(proxyAddr); perr == nil && port == "443" {
+			useTLS = true
+		}
+	}
+
+	// Host header & SNI: pakai SSH host (target), karena biasanya Cloudflare
+	// Worker dikonfigurasi berdasarkan domain SSH.
+	hostHeader := w.cfg.Host
+	sni := w.cfg.Host
+
+	wsConn, err := websocket.DialWS(
+		raw,
+		hostHeader,
+		w.cfg.RemoteProxyPath,
+		useTLS,
+		sni,
+		w.cfg.ConnectTimeout,
+	)
+	if err != nil {
+		raw.Close()
+		return nil, fmt.Errorf("websocket upgrade failed: %w", err)
+	}
+
+	observability.Info("WebSocket tunnel established",
+		"worker_id", w.cfg.ID,
+		"proxy", proxyAddr,
+		"tls", useTLS,
+		"path", w.cfg.RemoteProxyPath,
+		"host", hostHeader,
+	)
+
+	return wsConn, nil
+}
+
+// readProxyResponse membaca status line + header HTTP dari proxy HTTP CONNECT.
+func readProxyResponse(conn net.Conn, timeout time.Duration) error {
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	defer conn.SetReadDeadline(time.Time{})
+
+	reader := bufio.NewReaderSize(conn, 1024)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed reading proxy status line: %w", err)
+	}
+	statusLine = strings.TrimRight(statusLine, "\r\n")
+
+	if !strings.HasPrefix(statusLine, "HTTP/") {
+		return fmt.Errorf("proxy did not return HTTP response: %q", statusLine)
+	}
+
+	parts := strings.SplitN(statusLine, " ", 3)
+	if len(parts) < 2 || len(parts[1]) == 0 || parts[1][0] != '2' {
+		return fmt.Errorf("proxy returned non-2xx: %q", statusLine)
+	}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed reading proxy header: %w", err)
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
 	return nil
 }
 
