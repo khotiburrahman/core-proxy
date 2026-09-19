@@ -11,8 +11,8 @@ socks5:
 workers:
   - id: "ssh-sg-1"
     type: "ssh"
-    host: "biznet.vpnstore28.biz.id"
-    port: 22
+    host: "biznet.vpnstore28.my.id"
+    port: 443
     username: "hehe"
     password: "hehe"
     private_key: ""
@@ -48,4 +48,6 @@ rules:
 
 domains: []
 
-payloads: []
+payloads:
+  - name: "ws-vidio"
+    data: "GET / HTTP/1.1[crlf]Host: edu.ruangguru.com[crlf]Connection: Keep-Alive[crlf][crlf][split]PATCH / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf][crlf][split]HTTP/ 69[crlf][crlf]"

@@ -19,7 +19,6 @@ import (
 	"core-proxy/pkg/config"
 	"core-proxy/pkg/control/health"
 	"core-proxy/pkg/control/payload"
-	"core-proxy/pkg/dataplane/websocket"
 )
 
 type SSHWorker struct {
@@ -326,10 +325,9 @@ func (w *SSHWorker) connectViaWS(ctx context.Context, dialer *net.Dialer, proxyA
 		"ws_framing", isWS,
 	)
 
-	if isWS {
-		return websocket.WrapConn(underlying, br), nil
-	}
-
+	// Setelah 101/200, server kirim raw TCP (bukan WS frame).
+	// Jadi selalu pakai prefixedConn untuk SSH handshake langsung.
+	_ = isWS
 	return &prefixedConn{Conn: underlying, br: br}, nil
 }
 
