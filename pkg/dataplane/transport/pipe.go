@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"io"
 	"net"
 	"sync"
 	"time"
